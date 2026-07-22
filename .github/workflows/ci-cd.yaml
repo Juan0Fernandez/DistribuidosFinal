@@ -1,21 +1,24 @@
-name: ci-cd
+name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: juan0fernandez/distribuidosfinal
+  # Convierte el nombre de tu repo a minúsculas automáticamente
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # JOB 1: Instalar y Testear (Fail Fast)
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout del código
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
 
@@ -25,23 +28,43 @@ jobs:
       - name: Ejecutar pruebas
         run: npm test
 
+  # JOB 2: Construir, Escanear y Publicar
   build-push:
-    needs: build-test
+    needs: build-test # Este job SOLO se ejecuta si build-test pasa
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Login en GitHub Container Registry
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Iniciar sesión en GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build y push de la imagen
+      - name: Construir imagen localmente para escaneo
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan
+
+      - name: Escanear vulnerabilidades con Trivy (PUNTO EXTRA)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan'
+          format: 'table'
+          exit-code: '1' # Falla el pipeline si encuentra vulnerabilidades
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
+
+      - name: Construir y Publicar la imagen final
         uses: docker/build-push-action@v5
         with:
           context: .
